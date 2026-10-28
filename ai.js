@@ -15,6 +15,34 @@
     expert: { name: '专家', samples: 1800, noise: 0, adaptation: 1, range: 1, description: '更密集模拟、范围推断和对手适应；非 GTO 求解器。' }
   };
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+  const DIVERSITIES = {
+    low: { name: '低', personality: 1, variation: .012, sizing: .06, mix: .02 },
+    medium: { name: '中', personality: .55, variation: .055, sizing: .25, mix: .14 },
+    high: { name: '高', personality: .12, variation: .14, sizing: .55, mix: .34 }
+  };
+  const styleKeys = Object.keys(STYLES), diversityKeys = Object.keys(DIVERSITIES);
+  const pick = (items, rng) => items[Math.min(items.length - 1, Math.floor(rng() * items.length))];
+  // Resolve once per table (or when a setting changes), never once per decision.
+  // A saved setting stays "random"; the actual draw exists only in the live game.
+  function resolveProfile(styleChoice = 'random', diversityChoice = 'random', rng = Math.random, previous) {
+    styleChoice = STYLES[styleChoice] ? styleChoice : 'random';
+    diversityChoice = DIVERSITIES[diversityChoice] ? diversityChoice : 'random';
+    return {
+      styleChoice, diversityChoice,
+      style: previous?.styleChoice === styleChoice && STYLES[previous.style] ? previous.style : styleChoice === 'random' ? pick(styleKeys, rng) : styleChoice,
+      diversity: previous?.diversityChoice === diversityChoice && DIVERSITIES[previous.diversity] ? previous.diversity : diversityChoice === 'random' ? pick(diversityKeys, rng) : diversityChoice
+    };
+  }
+  function decisionStyle(styleId, diversityId = 'low', rng = Math.random) {
+    const base = STYLES[styleId] || STYLES.balanced, diversity = DIVERSITIES[diversityId] || DIVERSITIES.low;
+    const jitter = () => (rng() * 2 - 1) * diversity.variation;
+    return {
+      looseness: base.looseness * diversity.personality + jitter(),
+      aggression: clamp(1 + (base.aggression - 1) * diversity.personality + jitter() * 3, .35, 1.8),
+      bluff: clamp(1 + (base.bluff - 1) * diversity.personality + jitter() * 4, .15, 2),
+      call: base.call * diversity.personality + jitter() * .35
+    };
+  }
   function startingStrength(a, b, variant = 'standard') {
     const r1 = a % 13 + 2, r2 = b % 13 + 2, hi = Math.max(r1, r2), lo = Math.min(r1, r2);
     const pair = hi === lo, suited = Math.floor(a / 13) === Math.floor(b / 13), gap = hi - lo;
@@ -170,8 +198,9 @@
     const equity = sum / n;
     return { equity, samples: n, error: Math.sqrt(Math.max(0, sq / n - equity * equity) / n), method: 'simulation' };
   }
-  function decide(obs, difficulty = 'hard', styleId = 'balanced', rng = Math.random, sampleOverride) {
-    const level = LEVELS[difficulty] || LEVELS.hard, style = STYLES[styleId] || STYLES.balanced, l = obs.legal;
+  function decide(obs, difficulty = 'hard', styleId = 'balanced', rng = Math.random, sampleOverride, diversityId = 'low') {
+    const level = LEVELS[difficulty] || LEVELS.hard, diversity = DIVERSITIES[diversityId] || DIVERSITIES.low;
+    const style = decisionStyle(styleId, diversityId, rng), l = obs.legal;
     const me = obs.players[obs.id], rivals = obs.players.filter(p => p.id !== obs.id && p.inHand && !p.folded);
     const effective = Math.min(me.stack, Math.max(...rivals.map(p => p.stack + p.bet)));
     const estimateResult = estimate(obs, difficulty, rng, sampleOverride);
@@ -211,6 +240,11 @@
       bluff = !valueRaise && eq < .48 && rng() < bluffChance && effective > obs.pot * .6;
       if (bluff) reason = f.draw > .12 ? '听牌半诈唬，兼顾弃牌收益和后续改善' : '选择性诈唬，利用位置或关键阻断牌';
     }
+    // Vary timing between plausible actions; never fold a free check or invent an illegal raise.
+    if (valueRaise && rng() < diversity.mix) {
+      if (l.canCheck) { valueRaise = false; type = 'check'; reason = '混合策略：暂缓价值下注，保留后续行动空间'; }
+      else if (adjusted >= odds + .025) { valueRaise = false; type = 'call'; reason = '混合策略：以跟注保护继续范围'; }
+    }
     if (l.canRaise && (valueRaise || bluff)) {
       const unit = obs.bigBlind;
       let target;
@@ -229,6 +263,7 @@
         if (l.rawCall > 0) target = Math.max(target, l.currentBet * 2.6);
         if (valueRaise && eq > .72 && me.stack <= (eligiblePot + l.toCall) * 1.35) target = l.maxRaiseTo;
       }
+      if (target !== l.maxRaiseTo) target = l.currentBet + (target - l.currentBet) * (1 + (rng() * 2 - 1) * diversity.sizing);
       target = Math.round(target / Math.max(1, unit / 2)) * Math.max(1, unit / 2);
       target = Math.min(l.maxRaiseTo, Math.max(l.minRaiseTo, target));
       // Do not turn a tiny mandatory minimum into an expensive weak bluff.
@@ -236,9 +271,9 @@
     }
     if (type === 'fold' && l.canCheck) type = 'check';
     if (type === 'check') reason = '控制底池，保留后续决策空间';
-    return { type, amount, equity: estimateResult.equity, odds, samples: estimateResult.samples, error: estimateResult.error, method: estimateResult.method, reason, style: style.name };
+    return { type, amount, equity: estimateResult.equity, odds, samples: estimateResult.samples, error: estimateResult.error, method: estimateResult.method, reason };
   }
-  const api = { STYLES, LEVELS, estimate, decide, features, preflop, startingStrength };
+  const api = { STYLES, LEVELS, DIVERSITIES, resolveProfile, decisionStyle, estimate, decide, features, preflop, startingStrength };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.PokerAI = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

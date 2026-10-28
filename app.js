@@ -7,8 +7,8 @@
   const escape = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const streetNames = { preflop: '翻牌前', flop: '翻牌', turn: '转牌', river: '河牌' };
   const botNames = Array.from({ length: 10 }, (_, i) => `AI ${i + 1}`);
-  const defaultStyles = ['tag', 'lag', 'balanced', 'rock', 'station'];
-  let prefs = { difficulty: 'expert', speed: 750, stack: 2000, aiCount: 5, variant: 'standard', styles: Array.from({ length: 10 }, (_, i) => defaultStyles[i % 5]) };
+  const seatColors = ['#dda867', '#b697e5', '#6dc8bc', '#9fbddc', '#e69c9c', '#c5b86c', '#88b4cf', '#cda7c0', '#9cbf88', '#d9ac8b'];
+  let prefs = { difficulty: 'expert', speed: 750, stack: 2000, aiCount: 5, variant: 'standard', profileVersion: 3, diversity: 'random', sound: true, volume: .35, styles: Array(10).fill('random') };
   let history = [], storageAvailable = true;
   try {
     const stored = JSON.parse((localStorage.getItem('poker-preferences') || localStorage.getItem('night-poker-preferences')) || 'null');
@@ -18,11 +18,16 @@
       if ([1000, 2000, 4000].includes(+stored.stack)) prefs.stack = +stored.stack;
       if (Number.isInteger(stored.aiCount) && stored.aiCount >= 1 && stored.aiCount <= 10) prefs.aiCount = stored.aiCount;
       if (P.VARIANTS[stored.variant]) prefs.variant = stored.variant;
-      if (Array.isArray(stored.styles)) stored.styles.slice(0, 10).forEach((style, i) => { if (AI.STYLES[style]) prefs.styles[i] = style; });
+      if (stored.profileVersion === 3 && Array.isArray(stored.styles)) stored.styles.slice(0, 10).forEach((style, i) => { if (style === 'random' || AI.STYLES[style]) prefs.styles[i] = style; });
+      if (stored.diversity === 'random' || AI.DIVERSITIES[stored.diversity]) prefs.diversity = stored.diversity;
+      if (typeof stored.sound === 'boolean') prefs.sound = stored.sound;
+      if (typeof stored.volume === 'number' && stored.volume >= 0 && stored.volume <= 1) prefs.volume = stored.volume;
     }
     const savedHistory = JSON.parse((localStorage.getItem('poker-history') || localStorage.getItem('night-poker-history')) || '[]');
     if (Array.isArray(savedHistory)) history = savedHistory.filter(h => h && Array.isArray(h.events) && Array.isArray(h.decisions) && Array.isArray(h.results)).slice(0, 20);
   } catch { storageAvailable = false; }
+  const sound = window.PokerSound.create({ enabled: prefs.sound, volume: prefs.volume });
+  let soundEventIndex = 0, turnSoundKey = '';
   let game, timer, toastTimer, generation = 0, paused = false, decisions = [], lastRecorded = 0;
   let completed = 0, wonHands = 0, sessionNet = 0, raiseTo = 0, lastActorKey = '';
   function save() {
@@ -42,19 +47,19 @@
   function cardsText(cards) { return (cards || []).map(c => P.card(c).text).join(' '); }
   function winnerIds() { return new Set(game.pots.filter(p => !p.refund).flatMap(p => p.winners)); }
   function createTable() {
-    clearTimeout(timer); generation++; paused = false; lastRecorded = 0; lastActorKey = ''; completed = 0; wonHands = 0; sessionNet = 0;
-    game = new P.Game({ variant: prefs.variant, players: [{ name: '你', style: 'balanced', stack: prefs.stack }, ...botNames.slice(0, prefs.aiCount).map((name, i) => ({ name, style: prefs.styles[i], stack: prefs.stack }))] });
+    clearTimeout(timer); sound.stop(); soundEventIndex = 0; turnSoundKey = ''; generation++; paused = false; lastRecorded = 0; lastActorKey = ''; completed = 0; wonHands = 0; sessionNet = 0;
+    game = new P.Game({ variant: prefs.variant, players: [{ name: '你', style: 'balanced', stack: prefs.stack }, ...botNames.slice(0, prefs.aiCount).map((name, i) => ({ name, ...AI.resolveProfile(prefs.styles[i], prefs.diversity), stack: prefs.stack }))] });
     $('table-stage').classList.toggle('crowded', game.players.length > 6);
     $('table-size').textContent = `${game.players.length} 人桌`;
     $('variant-label').textContent = prefs.variant === 'short' ? '短牌 · 36 张 · 大小盲' : '标准 · 52 张';
-    $('difficulty').value = prefs.difficulty; $('speed').value = prefs.speed; updateDifficulty();
+    $('difficulty').value = prefs.difficulty; $('speed').value = prefs.speed; $('diversity').value = prefs.diversity; updateDifficulty(); updateDiversity(); updateSound();
     startHand();
   }
   function startHand() {
     if (game.status === 'playing') return;
     if (game.players[0].stack === 0 || game.players.filter(p => p.stack > 0).length < 2) { showSettings(); return; }
-    game.players.slice(1).forEach((p, i) => p.style = prefs.styles[i]);
-    decisions = []; paused = false; lastActorKey = ''; generation++; game.start(); finishIfNeeded(); render(); schedule();
+    game.players.slice(1).forEach((p, i) => Object.assign(p, AI.resolveProfile(prefs.styles[i], prefs.diversity, Math.random, p)));
+    decisions = []; paused = false; lastActorKey = ''; generation++; game.start(); soundEventIndex = game.events.length; turnSoundKey = ''; sound.play('deal'); finishIfNeeded(); render(); schedule();
   }
   function finishIfNeeded() {
     if (game.status !== 'complete' || lastRecorded === game.handNumber) return;
@@ -66,8 +71,8 @@
   }
   function renderOpponents() {
     $('opponent-list').innerHTML = game.players.slice(1).map(p => {
-      const style = AI.STYLES[p.style];
-      return `<div class="opponent-row" style="--avatar-color:${style.color}"><span class="mini-avatar">${p.id}</span><span class="opponent-name">${p.name}<small>${p.stack > 0 ? style.short : '筹码归零 · 已离桌'}</small></span><span class="style-label">${style.name}</span></div>`;
+      const color = seatColors[(p.id - 1) % seatColors.length];
+      return `<div class="opponent-row" style="--avatar-color:${color}"><span class="mini-avatar">${p.id}</span><span class="opponent-name">${p.name}<small>${p.stack > 0 ? '观察行动，判断对手' : '筹码归零 · 已离桌'}</small></span></div>`;
     }).join('');
   }
   function renderSeats() {
@@ -89,8 +94,8 @@
     $('seats').innerHTML = game.players.map(p => {
       const [x, y] = positions[game.players.length]?.[p.id] || [50, 50];
       const [mx, my] = mobile[game.players.length]?.[p.id] || [50, 50];
-      const color = p.id === 0 ? '#dfbb7d' : AI.STYLES[p.style].color;
-      const styleName = p.id === 0 ? 'YOU' : AI.STYLES[p.style].name;
+      const color = p.id === 0 ? '#dfbb7d' : seatColors[(p.id - 1) % seatColors.length];
+      const styleName = p.id === 0 ? 'YOU' : '';
       const show = p.id === 0 || (game.status === 'complete' && game.showdown && !p.folded);
       const marker = p.id === game.dealer ? 'D' : p.id === game.sb ? 'SB' : p.id === game.bb ? 'BB' : '';
       let action = p.action;
@@ -133,7 +138,7 @@
       $('result-summary').innerHTML = `<strong>${hero?.net > 0 ? '漂亮的一手。' : hero?.net === 0 ? '不急，下一手。' : '下一手，新的机会。'}</strong><br><span class="muted">本手 ${signed(hero?.net || 0)}${game.showdown && hero?.hand ? ' · ' + hero.hand : ''}</span>`;
       $('next-hand').textContent = game.players[0].stack === 0 ? '补充筹码 · 新桌 →' : game.players.filter(p => p.stack > 0).length < 2 ? '你赢下了这桌！新桌 →' : '下一手 →';
     }
-    renderControls();
+    renderControls(); syncSounds();
   }
   function renderControls() {
     const mine = game.status === 'playing' && game.actor === 0, done = game.status === 'complete';
@@ -185,7 +190,7 @@
       if (generation !== token || paused || game.actor !== actor || document.querySelector('dialog[open]')) return;
       try {
         const obs = game.observation(actor);
-        const decision = AI.decide(obs, prefs.difficulty, game.players[actor].style);
+        const decision = AI.decide(obs, prefs.difficulty, game.players[actor].style, Math.random, undefined, game.players[actor].diversity);
         decisions.push({ player: actor, street: game.street, action: decision.type, to: decision.amount, equity: decision.equity, odds: decision.odds, samples: decision.samples, method: decision.method, reason: decision.reason, level: prefs.difficulty });
         game.act(actor, decision.type, decision.amount);
       } catch (e) {
@@ -198,7 +203,7 @@
   }
   function openDialog(id) { clearTimeout(timer); $(id).showModal(); }
   function styleSelectors(target, prefix, count = prefs.aiCount, selected = prefs.styles) {
-    $(target).innerHTML = botNames.slice(0, count).map((name, i) => `<div class="dialog-style-row"><label for="${prefix}-${i}">${name}</label><select id="${prefix}-${i}">${Object.entries(AI.STYLES).map(([id, s]) => `<option value="${id}" ${selected[i] === id ? 'selected' : ''}>${s.name} · ${s.short}</option>`).join('')}</select></div>`).join('');
+    $(target).innerHTML = botNames.slice(0, count).map((name, i) => `<div class="dialog-style-row"><label for="${prefix}-${i}">${name}</label><select id="${prefix}-${i}"><option value="random" ${selected[i] === 'random' ? 'selected' : ''}>随机 · 隐藏性格</option>${Object.entries(AI.STYLES).map(([id, s]) => `<option value="${id}" ${selected[i] === id ? 'selected' : ''}>${s.name} · ${s.short}</option>`).join('')}</select></div>`).join('');
   }
   function variantNote() {
     $('variant-description').textContent = $('variant').value === 'short'
@@ -207,7 +212,7 @@
   }
   let draftStyles = [];
   function showSettings() {
-    $('starting-stack').value = prefs.stack; $('ai-count').value = prefs.aiCount; $('variant').value = prefs.variant;
+    $('starting-stack').value = prefs.stack; $('ai-count').value = prefs.aiCount; $('variant').value = prefs.variant; $('new-diversity').value = prefs.diversity; $('sound-volume').value = Math.round(prefs.volume * 100); $('volume-value').textContent = Math.round(prefs.volume * 100) + '%';
     draftStyles = [...prefs.styles]; styleSelectors('style-settings', 'new-style'); variantNote(); openDialog('settings-dialog');
   }
   $('ai-count').addEventListener('change', () => {
@@ -215,6 +220,51 @@
     styleSelectors('style-settings', 'new-style', Number($('ai-count').value), draftStyles);
   });
   $('variant').addEventListener('change', variantNote);
+  function updateDiversity() {
+    $('diversity-description').textContent = {
+      low: '低：性格倾向鲜明，行动与下注尺寸较稳定。',
+      medium: '中：减弱性格倾向，增加行动与下注尺寸变化。',
+      high: '高：性格影响较小，混合行动和下注尺寸变化更大。',
+      random: '随机：每个 AI 独立抽取低 / 中 / 高，实际档位隐藏。'
+    }[prefs.diversity] + ' 修改从下一手生效。';
+  }
+  function updateSound() {
+    const state = sound.state();
+    $('sound-button').textContent = prefs.sound ? '♪ 音效开' : '♪ 音效关';
+    $('sound-button').setAttribute('aria-pressed', String(prefs.sound));
+    $('sound-button').setAttribute('aria-label', prefs.sound ? '关闭音效' : '开启音效');
+    $('sound-button').title = !state.supported ? '此浏览器不支持音效' : !state.ready && prefs.sound ? '首次点击或按键后开始播放；音量可在新建牌桌中调整' : '点击切换音效；音量可在新建牌桌中调整';
+  }
+  function syncSounds() {
+    const events = game.events.slice(soundEventIndex); soundEventIndex = game.events.length;
+    if (document.hidden) { turnSoundKey = ''; return; }
+    events.forEach((event, i) => {
+      let cue;
+      if (event.type === 'action') cue = event.action === 'fold' ? 'fold' : event.amount ? 'chips' : 'check';
+      else if (event.type === 'street') cue = 'deal';
+      else if (event.type === 'finish') cue = game.results.find(r => r.id === 0)?.net > 0 ? 'win' : 'finish';
+      if (cue) sound.play(cue, i * .09);
+    });
+    const key = game.status === 'playing' && game.actor === 0 ? game.handNumber + ':' + game.events.length : '';
+    if (key && key !== turnSoundKey) sound.play('turn', events.length * .09);
+    turnSoundKey = key;
+  }
+  async function unlockSound() { await sound.unlock(); updateSound(); }
+  document.addEventListener('pointerdown', unlockSound, { capture: true });
+  document.addEventListener('keydown', e => { if (!e.repeat) unlockSound(); }, { capture: true });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) sound.stop(); });
+  $('sound-button').addEventListener('click', async () => {
+    prefs.sound = !prefs.sound; sound.setEnabled(prefs.sound); save();
+    if (prefs.sound) { await sound.unlock(); sound.play('check'); }
+    updateSound();
+    if (prefs.sound && !sound.state().supported) toast('此浏览器无法播放音效，仍可正常游玩。');
+  });
+  $('sound-volume').addEventListener('input', e => {
+    prefs.volume = Number(e.target.value) / 100; sound.setVolume(prefs.volume);
+    $('volume-value').textContent = e.target.value + '%'; save();
+  });
+  $('sound-volume').addEventListener('change', () => sound.play('chips'));
+  $('diversity').addEventListener('change', e => { prefs.diversity = e.target.value; updateDiversity(); save(); });
   function updateDifficulty() { $('difficulty-description').textContent = AI.LEVELS[prefs.difficulty].description; }
   $('difficulty').addEventListener('change', e => { prefs.difficulty = e.target.value; updateDifficulty(); save(); renderControls(); schedule(); });
   $('speed').addEventListener('change', e => { prefs.speed = Number(e.target.value); save(); schedule(); });
@@ -238,10 +288,10 @@
   $('new-table').addEventListener('click', showSettings);
   $('table-config-button').addEventListener('click', showSettings);
   $('help-button').addEventListener('click', () => openDialog('help-dialog'));
-  $('styles-button').addEventListener('click', () => { styleSelectors('live-style-settings', 'live-style'); openDialog('styles-dialog'); });
-  $('save-styles').addEventListener('click', () => { game.players.slice(1).forEach((_, i) => prefs.styles[i] = $('live-style-' + i).value); save(); $('styles-dialog').close(); toast('已保存，对手打法从下一手生效。'); });
+  $('styles-button').addEventListener('click', () => { $('live-diversity').value = prefs.diversity; styleSelectors('live-style-settings', 'live-style'); openDialog('styles-dialog'); });
+  $('save-styles').addEventListener('click', () => { prefs.diversity = $('live-diversity').value; $('diversity').value = prefs.diversity; updateDiversity(); game.players.slice(1).forEach((_, i) => prefs.styles[i] = $('live-style-' + i).value); save(); $('styles-dialog').close(); toast('已保存，对手打法从下一手生效。'); });
   $('settings-form').addEventListener('submit', e => {
-    e.preventDefault(); prefs.stack = Number($('starting-stack').value); prefs.aiCount = Number($('ai-count').value); prefs.variant = $('variant').value;
+    e.preventDefault(); prefs.stack = Number($('starting-stack').value); prefs.aiCount = Number($('ai-count').value); prefs.variant = $('variant').value; prefs.diversity = $('new-diversity').value;
     document.querySelectorAll('#style-settings select').forEach((select, i) => draftStyles[i] = select.value); prefs.styles = [...draftStyles]; save(); $('settings-dialog').close(); createTable();
   });
   document.querySelectorAll('.close-dialog').forEach(b => b.addEventListener('click', () => b.closest('dialog').close()));

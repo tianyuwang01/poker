@@ -187,7 +187,7 @@
       return {
         id, variant: this.variant, hole: [...p.hole], board: [...this.board], street: this.street, pot: this.pot(), dealer: this.dealer, sb: this.sb, bb: this.bb,
         bigBlind: this.bigBlind, handNumber: this.handNumber, legal: this.legal(id),
-        players: this.players.map(q => ({ id: q.id, stack: q.stack, bet: q.bet, total: q.total, inHand: q.inHand, folded: q.folded, style: q.style, stats: { ...q.stats } })),
+        players: this.players.map(q => ({ id: q.id, stack: q.stack, bet: q.bet, total: q.total, inHand: q.inHand, folded: q.folded, stats: { ...q.stats } })),
         events: this.events.filter(e => e.type !== 'finish').map(e => ({ ...e, ...(e.board ? { board: [...e.board] } : {}) }))
       };
     }
