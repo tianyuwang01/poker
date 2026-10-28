@@ -225,4 +225,76 @@ test('人数与模式边界检查', () => {
   for (const count of [0, 1, 12]) assert.throws(() => new P.Game({ players: Array(count).fill({ stack: 100 }) }));
   assert.throws(() => new P.Game({ variant: 'unknown', players: [{}, {}] }));
 });
-console.log(`\n${passed} 项测试全部通过。`);
+test('随机性格与随机多样性独立抽取且只在配置改变时重抽', () => {
+  const seenStyles = new Set(), seenDiversity = new Set(), combinations = new Set(), random = rng(510);
+  for (let i = 0; i < 1500; i++) {
+    const profile = AI.resolveProfile('random', 'random', random);
+    seenStyles.add(profile.style); seenDiversity.add(profile.diversity); combinations.add(profile.style + ':' + profile.diversity);
+    assert.equal(profile.styleChoice, 'random'); assert.equal(profile.diversityChoice, 'random');
+    assert.deepEqual(AI.resolveProfile('random', 'random', () => { throw new Error('不应重新抽取'); }, profile), profile);
+    const changed = AI.resolveProfile('tag', 'random', random, profile); assert.equal(changed.style, 'tag'); assert.equal(changed.diversity, profile.diversity);
+    const changedDiversity = AI.resolveProfile('random', 'high', random, profile); assert.equal(changedDiversity.style, profile.style); assert.equal(changedDiversity.diversity, 'high');
+  }
+  assert.equal(seenStyles.size, 5); assert.equal(seenDiversity.size, 3); assert.equal(combinations.size, 15);
+});
+test('高多样性减弱性格差异，同时增加同一性格的决策扰动', () => {
+  const lowA = AI.decisionStyle('rock', 'low', rng(20)), lowB = AI.decisionStyle('lag', 'low', rng(20));
+  const highA = AI.decisionStyle('rock', 'high', rng(20)), highB = AI.decisionStyle('lag', 'high', rng(20));
+  assert(Math.abs(highA.looseness - highB.looseness) < Math.abs(lowA.looseness - lowB.looseness) * .2);
+  const variance = level => {
+    const random = rng(44), xs = Array.from({ length: 1000 }, () => AI.decisionStyle('balanced', level, random).looseness);
+    const mean = xs.reduce((a, b) => a + b) / xs.length; return xs.reduce((sum, x) => sum + (x - mean) ** 2, 0) / xs.length;
+  };
+  assert(variance('high') > variance('medium') * 4); assert(variance('medium') > variance('low') * 4);
+});
+test('多样性改变实际行动和尺寸，不改变胜率模拟精度', () => {
+  const g = make([2000, 2000]); g.start(); const obs = g.observation(); obs.hole = parse('Ac Kc');
+  const choices = { low: new Set(), high: new Set() };
+  for (let seed = 1; seed <= 160; seed++) {
+    const low = AI.decide(obs, 'expert', 'balanced', rng(seed), 100, 'low');
+    const high = AI.decide(obs, 'expert', 'balanced', rng(seed), 100, 'high');
+    assert.equal(low.samples, high.samples); assert.equal(low.equity, high.equity);
+    for (const [level, d] of Object.entries({ low, high })) choices[level].add(d.type + ':' + (d.amount || 0));
+  }
+  assert(choices.high.size > choices.low.size); assert([...choices.high].some(s => s.startsWith('call'))); assert([...choices.high].some(s => s.startsWith('raise')));
+});
+test('对手观察不泄漏性格、多样性或抽取设置', () => {
+  const g = make(); g.start(); const original = g.observation();
+  g.players.forEach(p => Object.assign(p, AI.resolveProfile()));
+  assert.deepEqual(g.observation(), original);
+  assert(g.observation().players.every(p => !('style' in p) && !('diversity' in p) && !('styleChoice' in p)));
+});
+test('所有难度 × 性格 × 多样性：合法动作；两种牌库完整对局', () => {
+  for (const level of Object.keys(AI.LEVELS)) for (const style of Object.keys(AI.STYLES)) for (const diversity of Object.keys(AI.DIVERSITIES)) {
+    const g = make(); g.start(); const d = AI.decide(g.observation(), level, style, rng(71), 20, diversity); g.act(g.actor, d.type, d.amount);
+  }
+  for (const variant of ['standard', 'short']) for (const count of [2, 6, 11]) for (const diversity of Object.keys(AI.DIVERSITIES)) {
+    const random = rng(count + 815), g = new P.Game({ variant, players: Array.from({ length: count }, () => ({ stack: 500 })), rng: random });
+    g.start(); let actions = 0;
+    while (g.status === 'playing') { assert(++actions < 300); const d = AI.decide(g.observation(), 'expert', Object.keys(AI.STYLES)[g.actor % 5], random, 20, diversity); g.act(g.actor, d.type, d.amount); }
+    assert.equal(g.players.reduce((sum, p) => sum + p.stack, 0), count * 500);
+  }
+});
+(async () => {
+  const S = require('../sound.js');
+  let created = 0, started = 0, stopped = 0;
+  function parameter() { return { setValueAtTime(n, t) { assert(Number.isFinite(n) && Number.isFinite(t)); }, exponentialRampToValueAtTime(n, t) { assert(n > 0 && Number.isFinite(t)); }, cancelScheduledValues() {} }; }
+  class AudioContextMock {
+    constructor() { created++; this.state = 'suspended'; this.currentTime = 1; this.destination = {}; }
+    resume() { this.state = 'running'; return Promise.resolve(); }
+    createGain() { return { gain: parameter(), connect() {}, disconnect() {} }; }
+    createOscillator() { return { frequency: parameter(), connect() {}, disconnect() {}, start() { started++; }, stop() { stopped++; } }; }
+  }
+  const sound = S.create({ AudioContext: AudioContextMock });
+  assert.equal(created, 0); assert.equal(sound.play('deal'), false); await sound.unlock(); assert.equal(created, 1);
+  for (const cue of Object.keys(S.CUES)) assert(sound.play(cue)); assert(started > 10);
+  sound.setEnabled(false); const mutedStarts = started; assert.equal(sound.play('win'), false); assert(stopped >= started);
+  sound.setEnabled(true); sound.setVolume(0); assert.equal(sound.play('chips'), false); assert.equal(started, mutedStarts);
+  sound.setVolume(.3); assert(sound.play('check')); await sound.unlock(); assert.equal(created, 1);
+  passed++; console.log('✓ 音效按交互初始化、播放所有提示、静音及零音量不播放');
+  const unsupported = S.create({ AudioContext: null }); assert.equal(await unsupported.unlock(), false); assert.equal(unsupported.play('deal'), false);
+  class FailingContext extends AudioContextMock { resume() { return Promise.reject(new Error('blocked')); } }
+  const blocked = S.create({ AudioContext: FailingContext }); assert.equal(await blocked.unlock(), false); assert.equal(blocked.play('chips'), false);
+  passed++; console.log('✓ 不支持音频或浏览器拒绝播放时安全降级');
+  console.log(`\n${passed} 项测试全部通过。`);
+})().catch(error => { console.error(error); process.exitCode = 1; });
