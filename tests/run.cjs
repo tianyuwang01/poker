@@ -150,4 +150,79 @@ test('专家档默认 1,800 次模拟性能基线', () => {
   assert.equal(d.samples, 1800); g.act(g.actor, d.type, d.amount);
   console.log('  专家翻牌前决策耗时：' + Math.round(performance.now() - start) + ' ms');
 });
+test('短牌牌库、A6789、小顺同花顺与牌型顺序', () => {
+  const deck = P.shuffle(rng(82), 'short');
+  assert.equal(deck.length, 36); assert.equal(new Set(deck).size, 36); assert(deck.every(c => c % 13 >= 4));
+  const hands = ['Ac Qd Jh 9s 6d', 'Ac Ad Jh 9s 6d', 'Ac Ad Jh Js 6d', 'Ac Ad Ah 9s 6d', 'Ac 6d 7h 8s 9d', 'Ac Ad Ah 9s 9d', 'Ac Qc Jc 9c 6c', 'Ac Ad Ah As 9d', 'Ac 6c 7c 8c 9c'];
+  for (let i = 1; i < hands.length; i++) assert(P.evaluate(parse(hands[i]), 'short').value > P.evaluate(parse(hands[i - 1]), 'short').value);
+  assert.equal(P.evaluate(parse(hands[4]), 'short').kickers[0], 9);
+  assert.equal(P.evaluate(parse(hands[8]), 'short').name, '同花顺');
+  assert.equal(P.evaluate(parse(hands[4])).name, '高牌');
+  assert(P.evaluate(parse('6c 7d 8h 9s Td'), 'short').value > P.evaluate(parse(hands[4]), 'short').value);
+});
+test('短牌 7 张牌与最佳五张枚举一致（1,000 组）', () => {
+  const random = rng(83);
+  for (let n = 0; n < 1000; n++) {
+    const h = P.shuffle(random, 'short').slice(0, 7); let best = 0;
+    for (let a = 0; a < 7; a++) for (let b = a + 1; b < 7; b++) best = Math.max(best, P.evaluate(h.filter((_, i) => i !== a && i !== b), 'short').value);
+    assert.equal(P.evaluate(h, 'short').value, best);
+  }
+});
+test('相同摊牌：标准牌葫芦胜，短牌同花胜', () => {
+  for (const variant of ['standard', 'short']) {
+    const g = new P.Game({ variant, players: [{ stack: 200 }, { stack: 200 }], rng: rng() });
+    g.start(); g.board = parse('Ac Kc 6c 6d 9s');
+    g.players[0].hole = parse('Qc Tc'); g.players[1].hole = parse('6h 9h');
+    g.players.forEach(p => { p.stack = 100; p.total = 100; });
+    g.finish(true);
+    assert.equal(g.players[variant === 'short' ? 0 : 1].stack, 300);
+    assert.equal(g.players.reduce((sum, p) => sum + p.stack, 0), 400);
+  }
+});
+test('2–11 人 × 两种模式：完整公共牌、烧牌、轮转与筹码守恒', () => {
+  for (const variant of ['standard', 'short']) for (let count = 2; count <= 11; count++) {
+    const g = new P.Game({ variant, players: Array.from({ length: count }, () => ({ stack: 1000 })), rng: rng(count) });
+    for (let hand = 0; hand < 3; hand++) {
+      assert(g.start()); let actions = 0;
+      assert.equal(g.observation().variant, variant);
+      while (g.status === 'playing') { assert(++actions < 100); g.act(g.actor, g.legal().canCheck ? 'check' : 'call'); }
+      assert.equal(g.board.length, 5); assert.equal(g.deck.length, (variant === 'short' ? 36 : 52) - count * 2 - 8);
+      const visible = [...g.board, ...g.players.flatMap(p => p.hole)];
+      assert.equal(new Set(visible).size, count * 2 + 5);
+      assert(visible.every(c => Number.isInteger(c) && c >= 0 && c < 52 && (variant !== 'short' || c % 13 >= 4)));
+      assert.equal(g.players.reduce((sum, p) => sum + p.stack, 0), count * 1000);
+      assert.equal(g.dealer, hand % count);
+    }
+  }
+});
+test('短牌单挑河牌枚举 406 种；模拟不含被移除的低牌', () => {
+  const g = new P.Game({ variant: 'short', players: Array.from({ length: 11 }, () => ({ stack: 1000 })), rng: rng(84) });
+  g.start(); const obs = g.observation(); obs.board = parse('Tc Jc Qc 6d 8h'); obs.hole = parse('Kc Ac'); obs.street = 'river';
+  obs.players.forEach(p => p.folded = p.id !== obs.id && p.id !== (obs.id + 1) % 11);
+  const exact = AI.estimate(obs, 'expert', rng(5)); assert.equal(exact.samples, 406); assert.equal(exact.equity, 1);
+  obs.board = []; obs.street = 'preflop'; obs.players.forEach(p => p.folded = false);
+  const evaluate = P.evaluate; let evaluated = 0;
+  try {
+    P.evaluate = (cards, variant) => { evaluated++; assert.equal(variant, 'short'); assert(cards.every(c => c % 13 >= 4)); assert.equal(new Set(cards).size, cards.length); return evaluate(cards, variant); };
+    const d = AI.estimate(obs, 'expert', rng(6), 100); assert(d.equity >= 0 && d.equity <= 1); assert(evaluated > 100);
+  } finally { P.evaluate = evaluate; }
+  assert(AI.features(parse('Ac 6d'), parse('7h 8s Qc'), 'short').draw > 0);
+  assert.equal(AI.preflop(parse('Ac Kc'), 'short'), AI.preflop(parse('Ah Kh'), 'short'));
+});
+test('全部人数和模式的 AI 完整对局及隐藏信息边界', () => {
+  for (const variant of ['standard', 'short']) for (let count = 2; count <= 11; count++) {
+    const random = rng(count + 100), g = new P.Game({ variant, players: Array.from({ length: count }, () => ({ stack: 400, style: 'balanced' })), rng: random });
+    g.start(); let steps = 0;
+    while (g.status === 'playing') {
+      assert(++steps < 300); const obs = g.observation(); assert(!('deck' in obs)); assert(obs.players.every(p => !('hole' in p)));
+      const d = AI.decide(obs, Object.keys(AI.LEVELS)[steps % 4], Object.keys(AI.STYLES)[g.actor % 5], random, 20);
+      assert(Number.isFinite(d.equity)); g.act(g.actor, d.type, d.amount);
+    }
+    assert.equal(g.players.reduce((sum, p) => sum + p.stack, 0), count * 400);
+  }
+});
+test('人数与模式边界检查', () => {
+  for (const count of [0, 1, 12]) assert.throws(() => new P.Game({ players: Array(count).fill({ stack: 100 }) }));
+  assert.throws(() => new P.Game({ variant: 'unknown', players: [{}, {}] }));
+});
 console.log(`\n${passed} 项测试全部通过。`);
