@@ -15,25 +15,43 @@
     expert: { name: '专家', samples: 1800, noise: 0, adaptation: 1, range: 1, description: '更密集模拟、范围推断和对手适应；非 GTO 求解器。' }
   };
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-  function startingStrength(a, b) {
+  function startingStrength(a, b, variant = 'standard') {
     const r1 = a % 13 + 2, r2 = b % 13 + 2, hi = Math.max(r1, r2), lo = Math.min(r1, r2);
     const pair = hi === lo, suited = Math.floor(a / 13) === Math.floor(b / 13), gap = hi - lo;
+    if (variant === 'short') {
+      if (pair) return 30 + (hi - 6) * 6;
+      const distance = hi === 14 && lo <= 9 ? Math.min(gap, lo - 5) : gap;
+      return (hi - 6) * 3 + (lo - 6) * 1.8 + (suited ? 8 : 0) + (distance === 1 ? 12 : distance === 2 ? 7 : distance === 3 ? 2 : 0) + (hi === 14 ? 6 : 0);
+    }
     if (pair) return 36 + hi * 4.5;
     return hi * 2.2 + lo * 1.25 + (suited ? 4.5 : 0) + (gap === 1 ? 3 : gap === 2 ? 1 : 0) - Math.max(0, gap - 3) * 1.25 + (hi === 14 ? 4 : 0) + (hi === 14 && lo <= 5 && suited ? 3 : 0);
   }
-  const combos = [];
-  for (let a = 0; a < 52; a++) for (let b = a + 1; b < 52; b++) combos.push({ a, b, raw: startingStrength(a, b) });
-  combos.sort((a, b) => a.raw - b.raw);
-  const percentiles = new Map();
-  combos.forEach((c, i) => { c.strength = (i + .5) / combos.length; percentiles.set(c.a * 52 + c.b, c.strength); });
-  function preflop(hole) { return percentiles.get(Math.min(...hole) * 52 + Math.max(...hole)) || 0; }
-  function features(hole, board) {
-    if (board.length < 3) return { made: preflop(hole), draw: 0, blocker: hole.some(c => c % 13 === 12) };
-    const hand = P.evaluate([...hole, ...board]), ranks = hole.map(c => c % 13 + 2), br = board.map(c => c % 13 + 2);
+  const rangeModels = {};
+  for (const variant of Object.keys(P.VARIANTS)) {
+    const deck = P.deckCards(variant), combos = [], percentiles = new Map();
+    for (let i = 0; i < deck.length; i++) for (let j = i + 1; j < deck.length; j++) {
+      const a = deck[i], b = deck[j]; combos.push({ a, b, raw: startingStrength(a, b, variant) });
+    }
+    combos.sort((a, b) => a.raw - b.raw);
+    // Equal starting-hand classes receive the same percentile, independent of suit IDs.
+    for (let i = 0; i < combos.length;) {
+      let end = i + 1; while (end < combos.length && combos[end].raw === combos[i].raw) end++;
+      for (let j = i; j < end; j++) {
+        const c = combos[j]; c.strength = (i + end) / (2 * combos.length);
+        percentiles.set(c.a * 52 + c.b, c.strength);
+      }
+      i = end;
+    }
+    rangeModels[variant] = { deck, combos, percentiles };
+  }
+  function preflop(hole, variant = 'standard') { return rangeModels[variant].percentiles.get(Math.min(...hole) * 52 + Math.max(...hole)) || 0; }
+  function features(hole, board, variant = 'standard') {
+    if (board.length < 3) return { made: preflop(hole, variant), draw: 0, blocker: hole.some(c => c % 13 === 12) };
+    const hand = P.evaluate([...hole, ...board], variant), ranks = hole.map(c => c % 13 + 2), br = board.map(c => c % 13 + 2);
     const boardCounts = {}; br.forEach(r => boardCounts[r] = (boardCounts[r] || 0) + 1);
     const holePair = ranks[0] === ranks[1], hit = ranks.filter(r => br.includes(r));
     const top = Math.max(...br), pairRank = Math.max(...hit, holePair ? ranks[0] : 0);
-    let made = [.10, .35, .64, .78, .85, .9, .96, .99, 1][hand.category];
+    let made = (variant === 'short' ? [.10, .28, .50, .68, .81, .97, .91, .99, 1] : [.10, .35, .64, .78, .85, .9, .96, .99, 1])[hand.category];
     if (hand.category === 0) made += Math.max(...ranks) / 140;
     if (hand.category === 1) {
       if (!pairRank) made = .18 + Math.max(...ranks) / 150;
@@ -41,18 +59,18 @@
     }
     if (hand.category === 2 && Object.values(boardCounts).some(n => n >= 2)) made = pairRank ? .58 : .27;
     if (hand.category === 3 && Object.values(boardCounts).some(n => n === 3)) made = .30;
-    if (board.length === 5 && hand.value === P.evaluate(board).value) made = Math.min(made, .30);
+    if (board.length === 5 && hand.value === P.evaluate(board, variant).value) made = Math.min(made, .30);
     let draw = 0;
     if (board.length < 5) {
       for (let s = 0; s < 4; s++) {
         const n = [...hole, ...board].filter(c => Math.floor(c / 13) === s).length;
         if (n === 4 && hole.some(c => Math.floor(c / 13) === s)) draw += .20;
       }
-      const set = new Set([...ranks, ...br]); if (set.has(14)) set.add(1);
+      const set = new Set([...ranks, ...br]); if (set.has(14)) set.add(variant === 'short' ? 5 : 1);
       let outs = 0;
-      for (let high = 5; high <= 14; high++) {
+      for (let high = variant === 'short' ? 9 : 5; high <= 14; high++) {
         const run = Array.from({ length: 5 }, (_, i) => high - i);
-        if (run.filter(r => set.has(r)).length === 4 && ranks.some(r => run.includes(r) || (r === 14 && run.includes(1)))) outs++;
+        if (run.filter(r => set.has(r)).length === 4 && ranks.some(r => run.includes(r) || (r === 14 && run.includes(variant === 'short' ? 5 : 1)))) outs++;
       }
       if (hand.category < 4) draw += Math.min(.17, outs * .075);
     }
@@ -71,7 +89,7 @@
     const width = clamp(priorVpip, .12, .58), pos = position(obs, opponent.id);
     const later = events.filter(e => e.street !== 'preflop');
     let total = 0; const entries = [];
-    for (const c of combos) {
+    for (const c of rangeModels[obs.variant || 'standard'].combos) {
       if (known.has(c.a) || known.has(c.b)) continue;
       let w = 1;
       for (const e of pf) {
@@ -86,7 +104,7 @@
       }
       for (const e of later) {
         const board = obs.board.slice(0, e.street === 'flop' ? 3 : e.street === 'turn' ? 4 : 5);
-        const f = features([c.a, c.b], board), strength = clamp(f.made + f.draw, 0, 1);
+        const f = features([c.a, c.b], board, obs.variant), strength = clamp(f.made + f.draw, 0, 1);
         if (e.action === 'raise') {
           const size = e.amount / Math.max(obs.bigBlind, e.potBefore);
           const bluffs = .055 + f.draw * .45 + (f.blocker ? .035 : 0);
@@ -120,16 +138,16 @@
     // On the river in heads-up pots, enumerate every possible opponent hand.
     // Exact with respect to the inferred range (which is still a model).
     if (obs.board.length === 5 && opponents.length === 1 && ['hard', 'expert'].includes(difficulty)) {
-      const hero = P.evaluate([...obs.hole, ...obs.board]).value;
+      const hero = P.evaluate([...obs.hole, ...obs.board], obs.variant).value;
       let wonWeight = 0, previous = 0;
       for (const c of ranges[0].entries) {
         const weight = c.cumulative - previous; previous = c.cumulative;
-        const villain = P.evaluate([c.a, c.b, ...obs.board]).value;
+        const villain = P.evaluate([c.a, c.b, ...obs.board], obs.variant).value;
         wonWeight += weight * (hero > villain ? 1 : hero === villain ? .5 : 0);
       }
       return { equity: wonWeight / ranges[0].total, samples: ranges[0].entries.length, error: 0, method: 'enumeration' };
     }
-    const n = sampleOverride || level.samples;
+    const n = sampleOverride || level.samples, deck = rangeModels[obs.variant || 'standard'].deck;
     let sum = 0, sq = 0;
     for (let i = 0; i < n; i++) {
       const used = new Set(known), holes = [];
@@ -139,11 +157,11 @@
         hole.forEach(c => used.add(c)); holes.push(hole);
       }
       const board = [...obs.board];
-      while (board.length < 5) { const c = Math.floor(rng() * 52); if (!used.has(c)) { used.add(c); board.push(c); } }
-      const hero = P.evaluate([...obs.hole, ...board]).value;
+      while (board.length < 5) { const c = deck[Math.floor(rng() * deck.length)]; if (!used.has(c)) { used.add(c); board.push(c); } }
+      const hero = P.evaluate([...obs.hole, ...board], obs.variant).value;
       let ties = 1, lost = false;
       for (const hole of holes) {
-        const other = P.evaluate([...hole, ...board]).value;
+        const other = P.evaluate([...hole, ...board], obs.variant).value;
         if (other > hero) { lost = true; break; }
         if (other === hero) ties++;
       }
@@ -158,7 +176,7 @@
     const effective = Math.min(me.stack, Math.max(...rivals.map(p => p.stack + p.bet)));
     const estimateResult = estimate(obs, difficulty, rng, sampleOverride);
     let eq = clamp(estimateResult.equity + (rng() - .5) * 2 * level.noise, 0, 1);
-    const pos = position(obs, obs.id), f = features(obs.hole, obs.board), pf = preflop(obs.hole);
+    const pos = position(obs, obs.id), f = features(obs.hole, obs.board, obs.variant), pf = preflop(obs.hole, obs.variant);
     const maxContribution = me.total + me.stack;
     // Chips in pots this player cannot win must not inflate their pot odds.
     const eligiblePot = obs.players.reduce((s, p) => s + Math.min(p.total, maxContribution), 0);

@@ -4,17 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#101918">
-  <meta name="description" content="完全离线的德州扑克练习桌。六人对局、多种 AI 打法、范围胜率模拟。">
+  <meta name="description" content="完全离线的德州扑克练习桌。1–10 个 AI 可选，标准牌与短牌对局、多种 AI 打法、范围胜率模拟。">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; script-src 'self' file:; style-src 'self' 'unsafe-inline' file:; img-src 'self' data: file:; connect-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'">
-  <title>夜航 · 离线德州扑克</title>
-  <link rel="stylesheet" href="style.css">
-  <script defer src="engine.js"></script>
-  <script defer src="ai.js"></script>
-  <script defer src="app.js"></script>
+  <title>德州扑克</title>
+  <link rel="stylesheet" href="style.css?v=2">
+  <script defer src="engine.js?v=2"></script>
+  <script defer src="ai.js?v=2"></script>
+  <script defer src="app.js?v=2"></script>
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="#" aria-label="夜航扑克首页"><span class="brand-mark">♠</span><span>夜航 <b>POKER CLUB</b></span></a>
+    <a class="brand" href="#" aria-label="德州扑克首页"><span class="brand-mark">♠</span><span>德州扑克</span></a>
     <div class="top-center"><span class="status-dot"></span>本地牌桌 <span class="divider">/</span> 无限注德州扑克</div>
     <div class="header-actions"><span class="offline-pill"><span class="status-dot"></span>完全离线</span><button id="help-button" class="icon-button" title="规则与快捷键" aria-label="规则与快捷键">?</button></div>
   </header>
@@ -34,10 +34,11 @@
       <button id="new-table" class="secondary-button full-width">＋ 新建牌桌</button>
     </aside>
     <section class="game-area" aria-label="德州扑克牌桌">
-      <div class="table-heading"><div><span class="eyebrow">NO LIMIT HOLD’EM</span><h2>夜航练习桌 <span>6-MAX</span></h2></div><div class="table-meta"><span id="hand-label">第 001 手</span><span id="blinds-label">盲注 10 / 20</span></div></div>
-      <div class="table-stage">
+      <div class="table-heading"><div><span class="eyebrow" id="variant-label">标准 · 52 张</span><h2>德州扑克 <span id="table-size">6 人桌</span></h2></div><div class="table-meta"><span id="hand-label">第 001 手</span><span id="blinds-label">盲注 10 / 20</span></div></div>
+      <div class="table-setup"><span>1 位玩家 + 1–10 个 AI</span><button id="table-config-button" class="secondary-button">人数 / 标准牌 / 短牌 ⚙</button></div>
+      <div class="table-stage" id="table-stage">
         <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
-        <div class="poker-table"><div class="felt-line"></div><div class="table-wordmark">夜 航<span>POKER CLUB</span></div></div>
+        <div class="poker-table"><div class="felt-line"></div><div class="table-wordmark">德州扑克</div></div>
         <div class="board-zone"><div class="pot-label">底池 <strong id="pot-value">0</strong><span id="pot-bb"></span></div><div class="board" id="board" aria-label="公共牌"></div><div class="street-badge" id="street-label">等待发牌</div></div>
         <div id="seats"></div>
         <div id="result-banner" class="result-banner" hidden></div>
@@ -62,9 +63,9 @@
     </aside>
   </main>
   <div id="toast" role="status" class="toast" hidden></div>
-  <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><div><span class="eyebrow">MAKE IT YOUR TABLE</span><h2>新建牌桌</h2></div><button type="button" class="close-dialog icon-button" aria-label="关闭">×</button></div><p class="muted">新牌桌会结束当前对局，重新分配练习筹码。</p><label class="field-label" for="starting-stack">每人起始筹码</label><select id="starting-stack"><option value="1000">1,000 · 50 BB</option><option value="2000" selected>2,000 · 100 BB</option><option value="4000">4,000 · 200 BB</option></select><div id="style-settings"></div><button type="submit" class="primary-button full-width">创建并发牌 →</button></form></dialog>
+  <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><div><span class="eyebrow">MAKE IT YOUR TABLE</span><h2>新建牌桌</h2></div><button type="button" class="close-dialog icon-button" aria-label="关闭">×</button></div><p class="muted">新牌桌会结束当前对局，重新分配练习筹码。</p><label class="field-label" for="ai-count">AI 人数（不含你）</label><select id="ai-count"><option value="1">1 个 AI · 共 2 人</option><option value="2">2 个 AI · 共 3 人</option><option value="3">3 个 AI · 共 4 人</option><option value="4">4 个 AI · 共 5 人</option><option value="5">5 个 AI · 共 6 人</option><option value="6">6 个 AI · 共 7 人</option><option value="7">7 个 AI · 共 8 人</option><option value="8">8 个 AI · 共 9 人</option><option value="9">9 个 AI · 共 10 人</option><option value="10">10 个 AI · 共 11 人</option></select><label class="field-label" for="variant">牌局模式</label><select id="variant"><option value="standard">标准德州扑克 · 52 张</option><option value="short">短牌德州扑克 · 36 张（6–A）</option></select><p id="variant-description" class="setting-note"></p><label class="field-label" for="starting-stack">每人起始筹码</label><select id="starting-stack"><option value="1000">1,000 · 50 BB</option><option value="2000" selected>2,000 · 100 BB</option><option value="4000">4,000 · 200 BB</option></select><div id="style-settings"></div><button type="submit" class="primary-button full-width">创建并发牌 →</button></form></dialog>
   <dialog id="styles-dialog"><div class="dialog-heading"><div><span class="eyebrow">FIVE DIFFERENT MINDS</span><h2>对手打法</h2></div><button class="close-dialog icon-button" aria-label="关闭">×</button></div><p class="muted">修改后从下一手生效。打法决定倾向，难度决定判断精度。</p><div id="live-style-settings"></div><button id="save-styles" class="primary-button full-width">保存打法</button></dialog>
-  <dialog id="help-dialog"><div class="dialog-heading"><h2>坐下来，打一手。</h2><button class="close-dialog icon-button" aria-label="关闭">×</button></div><div class="help-content"><h3>基本规则</h3><p>每人两张底牌，加上最多五张公共牌，取其中最强的五张比较。你可以弃牌、过牌、跟注、下注或加注。最后仍未弃牌的人争夺底池。</p><p>牌型从强到弱：同花顺、四条、葫芦、同花、顺子、三条、两对、一对、高牌。A 可组成 A2345 小顺子；花色不分大小。</p><h3>下注与全下</h3><p>“加注到”指本轮累计投入的总额。最小加注幅度等于上一次完整加注幅度。筹码不足可全下；不足最小幅度的全下不会自动重新开放已行动玩家的加注权。筹码不等时自动分配主池、边池和平分余数。</p><h3>离线 AI 如何思考</h3><p>结合起手牌范围、行动历史、位置和对手统计，以蒙特卡洛模拟估计胜率，再选择价值下注、跟注、诈唬或弃牌。专家档每次决策默认模拟 1,800 次，但不是 GTO 求解器，也不保证职业级水平。</p><p>策略仅接收自己的底牌和公开信息。牌后复盘会显示 AI 当时的估算；弃牌玩家的底牌不会公开。不会调用任何联网服务。</p><h3>操作与保存</h3><p>F：弃牌　C：过牌 / 跟注　R：加注　N：下一手。输入金额或打开弹窗时不触发快捷键。设置和最近 20 手记录尽可能保存于当前浏览器；刷新页面会新开一桌。筹码归零后可新建牌桌。</p></div></dialog>
+  <dialog id="help-dialog"><div class="dialog-heading"><h2>坐下来，打一手。</h2><button class="close-dialog icon-button" aria-label="关闭">×</button></div><div class="help-content"><h3>基本规则</h3><p>每人两张底牌，加上最多五张公共牌，取其中最强的五张比较。你可以弃牌、过牌、跟注、下注或加注。最后仍未弃牌的人争夺底池。</p><p>牌型从强到弱：同花顺、四条、葫芦、同花、顺子、三条、两对、一对、高牌。A 可组成 A2345 小顺子；花色不分大小。</p><h3>短牌模式（大小盲版）</h3><p>去掉 2、3、4、5，仅使用 6 到 A 的 36 张牌。牌型顺序：同花顺、四条、同花、葫芦、顺子、三条、两对、一对、高牌。A6789 是最小顺子。此练习桌采用大小盲 10 / 20，不采用全员前注或按钮盲；AI 的牌库、范围和胜率计算同步切换。</p><h3>人数与模式</h3><p>点击牌桌上方“人数 / 标准牌 / 短牌”，可选择 1–10 个 AI。创建新桌会结束当前手牌并重置本桌筹码；已完成的历史记录仍保留。</p><h3>下注与全下</h3><p>“加注到”指本轮累计投入的总额。最小加注幅度等于上一次完整加注幅度。筹码不足可全下；不足最小幅度的全下不会自动重新开放已行动玩家的加注权。筹码不等时自动分配主池、边池和平分余数。</p><h3>离线 AI 如何思考</h3><p>结合起手牌范围、行动历史、位置和对手统计，以蒙特卡洛模拟估计胜率，再选择价值下注、跟注、诈唬或弃牌。专家档每次决策默认模拟 1,800 次，但不是 GTO 求解器，也不保证职业级水平。</p><p>策略仅接收自己的底牌和公开信息。牌后复盘会显示 AI 当时的估算；弃牌玩家的底牌不会公开。不会调用任何联网服务。</p><h3>操作与保存</h3><p>F：弃牌　C：过牌 / 跟注　R：加注　N：下一手。输入金额或打开弹窗时不触发快捷键。设置和最近 20 手记录尽可能保存于当前浏览器；刷新页面会新开一桌。筹码归零后可新建牌桌。</p></div></dialog>
   <dialog id="history-dialog" class="wide-dialog"><div class="dialog-heading"><div><span class="eyebrow">YOUR LAST HANDS</span><h2>最近牌局</h2></div><button class="close-dialog icon-button" aria-label="关闭">×</button></div><p class="muted">本机保留最近 20 手。估算胜率依赖模型范围，不是真实胜率。</p><div id="history-content"></div></dialog>
   <noscript>请启用 JavaScript。本游戏的所有规则和 AI 均在浏览器本地运行。</noscript>
 </body>

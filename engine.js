@@ -10,10 +10,15 @@
     for (let i = 0; i < 5; i++) value = value * 15 + (ranks[i] || 0);
     return value;
   }
-  function straight(ranks) {
+  const VARIANTS = { standard: { name: '标准牌', minRank: 2 }, short: { name: '短牌', minRank: 6 } };
+  function deckCards(variant = 'standard') {
+    if (!VARIANTS[variant]) throw new Error('未知牌局模式');
+    return Array.from({ length: 52 }, (_, i) => i).filter(c => c % 13 + 2 >= VARIANTS[variant].minRank);
+  }
+  function straight(ranks, variant = 'standard') {
     const set = new Set(ranks);
-    if (set.has(14)) set.add(1);
-    for (let high = 14; high >= 5; high--) {
+    if (set.has(14)) set.add(variant === 'short' ? 5 : 1);
+    for (let high = 14; high >= (variant === 'short' ? 9 : 5); high--) {
       let yes = true;
       for (let j = 0; j < 5; j++) if (!set.has(high - j)) { yes = false; break; }
       if (yes) return high;
@@ -21,7 +26,7 @@
     return 0;
   }
   // Direct best-five evaluation of 5–7 cards; no dependencies or lookup downloads.
-  function evaluate(cards) {
+  function evaluate(cards, variant = 'standard') {
     if (cards.length < 5 || cards.length > 7) throw new Error('需要 5–7 张牌');
     const counts = Array(15).fill(0), suits = [[], [], [], []];
     for (const c of cards) { const r = c % 13 + 2; counts[r]++; suits[Math.floor(c / 13)].push(r); }
@@ -30,10 +35,11 @@
     groups.sort((a, b) => b[0] - a[0] || b[1] - a[1]);
     const flush = suits.find(s => s.length >= 5);
     let category, kickers;
-    const sf = flush ? straight(flush) : 0;
-    const st = straight(ranks);
+    const sf = flush ? straight(flush, variant) : 0;
+    const st = straight(ranks, variant);
     if (sf) { category = 8; kickers = [sf]; }
     else if (groups[0][0] === 4) { category = 7; kickers = [groups[0][1], ranks.find(r => r !== groups[0][1])]; }
+    else if (variant === 'short' && flush) { category = 5; kickers = flush.sort((a, b) => b - a).slice(0, 5); }
     else if (groups[0][0] === 3 && groups[1][0] >= 2) { category = 6; kickers = [groups[0][1], groups[1][1]]; }
     else if (flush) { category = 5; kickers = flush.sort((a, b) => b - a).slice(0, 5); }
     else if (st) { category = 4; kickers = [st]; }
@@ -42,15 +48,19 @@
       category = 2; kickers = [groups[0][1], groups[1][1], ranks.find(r => r !== groups[0][1] && r !== groups[1][1])];
     } else if (groups[0][0] === 2) { category = 1; kickers = [groups[0][1], ...ranks.filter(r => r !== groups[0][1]).slice(0, 3)]; }
     else { category = 0; kickers = ranks.slice(0, 5); }
-    return { value: score(category, kickers), category, kickers, name: NAMES[category] };
+    const order = variant === 'short' ? (category === 5 ? 6 : category === 6 ? 5 : category) : category;
+    return { value: score(order, kickers), category, kickers, name: NAMES[category] };
   }
-  function shuffle(rng = Math.random) {
-    const deck = Array.from({ length: 52 }, (_, i) => i);
-    for (let i = 51; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
+  function shuffle(rng = Math.random, variant = 'standard') {
+    const deck = deckCards(variant);
+    for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
     return deck;
   }
   class Game {
-    constructor({ players, smallBlind = 10, bigBlind = 20, rng = Math.random }) {
+    constructor({ players, smallBlind = 10, bigBlind = 20, rng = Math.random, variant = 'standard' }) {
+      if (!Array.isArray(players) || players.length < 2 || players.length > 11) throw new Error('牌桌需要 2–11 人');
+      if (!VARIANTS[variant]) throw new Error('未知牌局模式');
+      this.variant = variant;
       this.players = players.map((p, i) => ({ ...p, id: i, stack: p.stack ?? 2000, stats: { hands: 0, vpip: 0, raises: 0, decisions: 0, folds: 0, bets: 0, calls: 0, facedBet: 0, foldedToBet: 0 } }));
       this.smallBlind = smallBlind; this.bigBlind = bigBlind; this.rng = rng;
       this.dealer = -1; this.handNumber = 0; this.status = 'idle'; this.actor = -1;
@@ -68,7 +78,7 @@
       if (this.status === 'playing') throw new Error('本手尚未结束');
       if (this.players.filter(p => p.stack > 0).length < 2) return false;
       this.handNumber++; this.status = 'playing'; this.street = 'preflop'; this.board = []; this.events = []; this.results = []; this.pots = [];
-      this.deck = shuffle(this.rng); this.currentBet = this.bigBlind; this.minRaise = this.bigBlind;
+      this.deck = shuffle(this.rng, this.variant); this.currentBet = this.bigBlind; this.minRaise = this.bigBlind;
       this.dealer = this.next(this.dealer, p => p.stack > 0);
       for (const p of this.players) {
         Object.assign(p, { inHand: p.stack > 0, folded: false, hole: [], bet: 0, total: 0, lastActedAt: null, action: '', startStack: p.stack, didVpip: false, didRaise: false });
@@ -145,7 +155,7 @@
     finish(showdown) {
       this.status = 'complete'; this.actor = -1; this.showdown = showdown;
       const awards = new Map(), live = this.live();
-      const values = new Map(showdown ? live.map(p => [p.id, evaluate([...p.hole, ...this.board])]) : []);
+      const values = new Map(showdown ? live.map(p => [p.id, evaluate([...p.hole, ...this.board], this.variant)]) : []);
       const levels = [...new Set(this.players.map(p => p.total).filter(Boolean))].sort((a, b) => a - b);
       let previous = 0;
       for (const level of levels) {
@@ -175,14 +185,14 @@
     observation(id = this.actor) {
       const p = this.players[id];
       return {
-        id, hole: [...p.hole], board: [...this.board], street: this.street, pot: this.pot(), dealer: this.dealer, sb: this.sb, bb: this.bb,
+        id, variant: this.variant, hole: [...p.hole], board: [...this.board], street: this.street, pot: this.pot(), dealer: this.dealer, sb: this.sb, bb: this.bb,
         bigBlind: this.bigBlind, handNumber: this.handNumber, legal: this.legal(id),
         players: this.players.map(q => ({ id: q.id, stack: q.stack, bet: q.bet, total: q.total, inHand: q.inHand, folded: q.folded, style: q.style, stats: { ...q.stats } })),
         events: this.events.filter(e => e.type !== 'finish').map(e => ({ ...e, ...(e.board ? { board: [...e.board] } : {}) }))
       };
     }
   }
-  const api = { Game, card, evaluate, shuffle, straight, RANKS, SUITS, NAMES };
+  const api = { Game, card, evaluate, shuffle, straight, deckCards, VARIANTS, RANKS, SUITS, NAMES };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.Poker = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

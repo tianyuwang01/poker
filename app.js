@@ -6,25 +6,27 @@
   const signed = n => (n > 0 ? '+' : n < 0 ? '−' : '±') + ' ' + fmt(Math.abs(n));
   const escape = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const streetNames = { preflop: '翻牌前', flop: '翻牌', turn: '转牌', river: '河牌' };
-  const botNames = ['林舟', '小野', '阿岚', '青禾', '老白'];
+  const botNames = Array.from({ length: 10 }, (_, i) => `AI ${i + 1}`);
   const defaultStyles = ['tag', 'lag', 'balanced', 'rock', 'station'];
-  let prefs = { difficulty: 'expert', speed: 750, stack: 2000, styles: [...defaultStyles] };
+  let prefs = { difficulty: 'expert', speed: 750, stack: 2000, aiCount: 5, variant: 'standard', styles: Array.from({ length: 10 }, (_, i) => defaultStyles[i % 5]) };
   let history = [], storageAvailable = true;
   try {
-    const stored = JSON.parse(localStorage.getItem('night-poker-preferences') || 'null');
+    const stored = JSON.parse((localStorage.getItem('poker-preferences') || localStorage.getItem('night-poker-preferences')) || 'null');
     if (stored) {
       if (AI.LEVELS[stored.difficulty]) prefs.difficulty = stored.difficulty;
       if ([250, 750, 1400].includes(+stored.speed)) prefs.speed = +stored.speed;
       if ([1000, 2000, 4000].includes(+stored.stack)) prefs.stack = +stored.stack;
-      if (Array.isArray(stored.styles) && stored.styles.length === 5 && stored.styles.every(s => AI.STYLES[s])) prefs.styles = stored.styles;
+      if (Number.isInteger(stored.aiCount) && stored.aiCount >= 1 && stored.aiCount <= 10) prefs.aiCount = stored.aiCount;
+      if (P.VARIANTS[stored.variant]) prefs.variant = stored.variant;
+      if (Array.isArray(stored.styles)) stored.styles.slice(0, 10).forEach((style, i) => { if (AI.STYLES[style]) prefs.styles[i] = style; });
     }
-    const savedHistory = JSON.parse(localStorage.getItem('night-poker-history') || '[]');
+    const savedHistory = JSON.parse((localStorage.getItem('poker-history') || localStorage.getItem('night-poker-history')) || '[]');
     if (Array.isArray(savedHistory)) history = savedHistory.filter(h => h && Array.isArray(h.events) && Array.isArray(h.decisions) && Array.isArray(h.results)).slice(0, 20);
   } catch { storageAvailable = false; }
   let game, timer, toastTimer, generation = 0, paused = false, decisions = [], lastRecorded = 0;
   let completed = 0, wonHands = 0, sessionNet = 0, raiseTo = 0, lastActorKey = '';
   function save() {
-    try { localStorage.setItem('night-poker-preferences', JSON.stringify(prefs)); localStorage.setItem('night-poker-history', JSON.stringify(history)); }
+    try { localStorage.setItem('poker-preferences', JSON.stringify(prefs)); localStorage.setItem('poker-history', JSON.stringify(history)); }
     catch { if (storageAvailable) toast('浏览器存储不可用，本次仍可正常游玩。'); storageAvailable = false; }
   }
   function toast(message) {
@@ -41,7 +43,10 @@
   function winnerIds() { return new Set(game.pots.filter(p => !p.refund).flatMap(p => p.winners)); }
   function createTable() {
     clearTimeout(timer); generation++; paused = false; lastRecorded = 0; lastActorKey = ''; completed = 0; wonHands = 0; sessionNet = 0;
-    game = new P.Game({ players: [{ name: '你', style: 'balanced', stack: prefs.stack }, ...botNames.map((name, i) => ({ name, style: prefs.styles[i], stack: prefs.stack }))] });
+    game = new P.Game({ variant: prefs.variant, players: [{ name: '你', style: 'balanced', stack: prefs.stack }, ...botNames.slice(0, prefs.aiCount).map((name, i) => ({ name, style: prefs.styles[i], stack: prefs.stack }))] });
+    $('table-stage').classList.toggle('crowded', game.players.length > 6);
+    $('table-size').textContent = `${game.players.length} 人桌`;
+    $('variant-label').textContent = prefs.variant === 'short' ? '短牌 · 36 张 · 大小盲' : '标准 · 52 张';
     $('difficulty').value = prefs.difficulty; $('speed').value = prefs.speed; updateDifficulty();
     startHand();
   }
@@ -56,18 +61,34 @@
     lastRecorded = game.handNumber; completed++;
     const hero = game.results.find(r => r.id === 0); sessionNet += hero?.net || 0;
     if (winnerIds().has(0)) wonHands++;
-    history.unshift({ hand: game.handNumber, date: new Date().toLocaleString('zh-CN'), difficulty: prefs.difficulty, hero: [...game.players[0].hole], board: [...game.board], pot: game.pot(), net: hero?.net || 0, names: game.players.map(p => p.name), results: game.results.map(r => ({ ...r })), events: game.events.map(e => ({ ...e })), decisions: decisions.map(d => ({ ...d })) });
+    history.unshift({ variant: game.variant, playerCount: game.players.length, hand: game.handNumber, date: new Date().toLocaleString('zh-CN'), difficulty: prefs.difficulty, hero: [...game.players[0].hole], board: [...game.board], pot: game.pot(), net: hero?.net || 0, names: game.players.map(p => p.name), results: game.results.map(r => ({ ...r })), events: game.events.map(e => ({ ...e })), decisions: decisions.map(d => ({ ...d })) });
     history = history.slice(0, 20); save();
   }
   function renderOpponents() {
     $('opponent-list').innerHTML = game.players.slice(1).map(p => {
       const style = AI.STYLES[p.style];
-      return `<div class="opponent-row" style="--avatar-color:${style.color}"><span class="mini-avatar">${p.name[0]}</span><span class="opponent-name">${p.name}<small>${p.stack > 0 ? style.short : '筹码归零 · 已离桌'}</small></span><span class="style-label">${style.name}</span></div>`;
+      return `<div class="opponent-row" style="--avatar-color:${style.color}"><span class="mini-avatar">${p.id}</span><span class="opponent-name">${p.name}<small>${p.stack > 0 ? style.short : '筹码归零 · 已离桌'}</small></span><span class="style-label">${style.name}</span></div>`;
     }).join('');
   }
   function renderSeats() {
     const winners = winnerIds();
+    const positions = {
+      2: [[50, 89], [50, 13]],
+      3: [[50, 89], [18, 22], [82, 22]],
+      4: [[50, 89], [12, 47], [50, 13], [88, 47]],
+      5: [[50, 89], [12, 65], [20, 18], [80, 18], [88, 65]],
+      6: [[50, 89], [12, 69], [13, 25], [50, 13], [87, 25], [88, 69]]
+    };
+    const mobile = {
+      2: [[50, 88], [50, 14]],
+      3: [[50, 88], [17, 23], [83, 23]],
+      4: [[50, 88], [13, 48], [50, 14], [87, 48]],
+      5: [[50, 88], [13, 66], [17, 24], [83, 24], [87, 66]],
+      6: [[50, 88], [13, 66], [13, 31], [50, 14], [87, 31], [87, 66]]
+    };
     $('seats').innerHTML = game.players.map(p => {
+      const [x, y] = positions[game.players.length]?.[p.id] || [50, 50];
+      const [mx, my] = mobile[game.players.length]?.[p.id] || [50, 50];
       const color = p.id === 0 ? '#dfbb7d' : AI.STYLES[p.style].color;
       const styleName = p.id === 0 ? 'YOU' : AI.STYLES[p.style].name;
       const show = p.id === 0 || (game.status === 'complete' && game.showdown && !p.folded);
@@ -76,7 +97,7 @@
       if (game.status === 'complete' && winners.has(p.id)) action = game.results.find(r => r.id === p.id)?.hand || '赢得底池';
       if (p.id === game.actor) action = p.id === 0 ? '轮到你行动' : paused ? '已暂停' : '思考中…';
       if (!p.inHand) action = '已离桌';
-      return `<div class="seat seat-${p.id} ${p.folded ? 'folded' : ''} ${!p.inHand ? 'busted' : ''} ${p.id === game.actor ? 'active' : ''} ${winners.has(p.id) ? 'winner' : ''}" style="--avatar-color:${color}"><div class="seat-portrait">${p.name[0]}</div><div class="seat-info"><div class="seat-name">${p.name}<span class="style-chip">${styleName}</span></div><div class="seat-stack">${fmt(p.stack)}</div>${marker && p.inHand ? `<span class="seat-tag" title="${marker === 'D' ? '庄家按钮' : marker === 'SB' ? '小盲位' : '大盲位'}">${marker}</span>` : ''}</div><div class="seat-cards">${p.hole.map(c => cardHTML(c, !show)).join('')}</div><div class="seat-action">${escape(action || '')}</div>${p.bet && game.status === 'playing' ? `<div class="seat-bet">${fmt(p.bet)}</div>` : ''}</div>`;
+      return `<div class="seat seat-${p.id} ${p.folded ? 'folded' : ''} ${!p.inHand ? 'busted' : ''} ${p.id === game.actor ? 'active' : ''} ${winners.has(p.id) ? 'winner' : ''}" style="--avatar-color:${color};--seat-x:${x}%;--seat-y:${y}%;--mobile-x:${mx}%;--mobile-y:${my}%"><div class="seat-portrait">${p.id}</div><div class="seat-info"><div class="seat-name">${p.name}<span class="style-chip">${styleName}</span></div><div class="seat-stack">${fmt(p.stack)}</div>${marker && p.inHand ? `<span class="seat-tag" title="${marker === 'D' ? '庄家按钮' : marker === 'SB' ? '小盲位' : '大盲位'}">${marker}</span>` : ''}</div><div class="seat-cards">${p.hole.map(c => cardHTML(c, !show)).join('')}</div><div class="seat-action">${escape(action || '')}</div>${p.bet && game.status === 'playing' ? `<div class="seat-bet">${fmt(p.bet)}</div>` : ''}</div>`;
     }).join('');
   }
   function eventText(e, names) {
@@ -176,10 +197,24 @@
     }, prefs.speed);
   }
   function openDialog(id) { clearTimeout(timer); $(id).showModal(); }
-  function styleSelectors(target, prefix) {
-    $(target).innerHTML = botNames.map((name, i) => `<div class="dialog-style-row"><label for="${prefix}-${i}">${name}</label><select id="${prefix}-${i}">${Object.entries(AI.STYLES).map(([id, s]) => `<option value="${id}" ${prefs.styles[i] === id ? 'selected' : ''}>${s.name} · ${s.short}</option>`).join('')}</select></div>`).join('');
+  function styleSelectors(target, prefix, count = prefs.aiCount, selected = prefs.styles) {
+    $(target).innerHTML = botNames.slice(0, count).map((name, i) => `<div class="dialog-style-row"><label for="${prefix}-${i}">${name}</label><select id="${prefix}-${i}">${Object.entries(AI.STYLES).map(([id, s]) => `<option value="${id}" ${selected[i] === id ? 'selected' : ''}>${s.name} · ${s.short}</option>`).join('')}</select></div>`).join('');
   }
-  function showSettings() { $('starting-stack').value = prefs.stack; styleSelectors('style-settings', 'new-style'); openDialog('settings-dialog'); }
+  function variantNote() {
+    $('variant-description').textContent = $('variant').value === 'short'
+      ? '36 张牌（6–A）；同花大于葫芦，顺子大于三条，A6789 为最小顺子。本桌采用大小盲 10 / 20。'
+      : '52 张牌；葫芦大于同花，A2345 为最小顺子。大小盲 10 / 20。';
+  }
+  let draftStyles = [];
+  function showSettings() {
+    $('starting-stack').value = prefs.stack; $('ai-count').value = prefs.aiCount; $('variant').value = prefs.variant;
+    draftStyles = [...prefs.styles]; styleSelectors('style-settings', 'new-style'); variantNote(); openDialog('settings-dialog');
+  }
+  $('ai-count').addEventListener('change', () => {
+    document.querySelectorAll('#style-settings select').forEach((select, i) => draftStyles[i] = select.value);
+    styleSelectors('style-settings', 'new-style', Number($('ai-count').value), draftStyles);
+  });
+  $('variant').addEventListener('change', variantNote);
   function updateDifficulty() { $('difficulty-description').textContent = AI.LEVELS[prefs.difficulty].description; }
   $('difficulty').addEventListener('change', e => { prefs.difficulty = e.target.value; updateDifficulty(); save(); renderControls(); schedule(); });
   $('speed').addEventListener('change', e => { prefs.speed = Number(e.target.value); save(); schedule(); });
@@ -201,11 +236,13 @@
   $('next-hand').addEventListener('click', startHand);
   $('pause-button').addEventListener('click', () => { paused = !paused; render(); schedule(); });
   $('new-table').addEventListener('click', showSettings);
+  $('table-config-button').addEventListener('click', showSettings);
   $('help-button').addEventListener('click', () => openDialog('help-dialog'));
   $('styles-button').addEventListener('click', () => { styleSelectors('live-style-settings', 'live-style'); openDialog('styles-dialog'); });
-  $('save-styles').addEventListener('click', () => { prefs.styles = botNames.map((_, i) => $('live-style-' + i).value); save(); $('styles-dialog').close(); toast('已保存，对手打法从下一手生效。'); });
+  $('save-styles').addEventListener('click', () => { game.players.slice(1).forEach((_, i) => prefs.styles[i] = $('live-style-' + i).value); save(); $('styles-dialog').close(); toast('已保存，对手打法从下一手生效。'); });
   $('settings-form').addEventListener('submit', e => {
-    e.preventDefault(); prefs.stack = Number($('starting-stack').value); prefs.styles = botNames.map((_, i) => $('new-style-' + i).value); save(); $('settings-dialog').close(); createTable();
+    e.preventDefault(); prefs.stack = Number($('starting-stack').value); prefs.aiCount = Number($('ai-count').value); prefs.variant = $('variant').value;
+    document.querySelectorAll('#style-settings select').forEach((select, i) => draftStyles[i] = select.value); prefs.styles = [...draftStyles]; save(); $('settings-dialog').close(); createTable();
   });
   document.querySelectorAll('.close-dialog').forEach(b => b.addEventListener('click', () => b.closest('dialog').close()));
   document.querySelectorAll('dialog').forEach(dialog => {
@@ -213,7 +250,7 @@
     dialog.addEventListener('click', e => { if (e.target === dialog) { const r = dialog.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) dialog.close(); } });
   });
   $('history-button').addEventListener('click', () => {
-    $('history-content').innerHTML = history.length ? history.map(h => `<details class="history-hand"><summary><span>第 ${h.hand} 手 · ${escape(h.date)} </span><b class="${h.net >= 0 ? 'positive' : 'negative'}">${signed(h.net)}</b><br><span class="muted">你的手牌 ${escape(cardsText(h.hero))}　公共牌 ${escape(cardsText(h.board)) || '未发出'}</span></summary><div class="history-detail"><h4>结算 · 底池 ${fmt(h.pot)}</h4>${h.results.map(r => `<p>${escape(h.names[r.id])} ${signed(r.net)} ${r.hole.length ? ' · ' + escape(cardsText(r.hole)) + ' · ' + escape(r.hand) : ''}</p>`).join('')}<h4>行动记录</h4>${h.events.map(e => `<p>${escape(eventText(e, h.names))}</p>`).join('')}<div class="review"><h4>AI 决策回看</h4>${h.decisions.map(d => `<p><strong>${escape(h.names[d.player])} · ${streetNames[d.street]}</strong> · ${escape(AI.LEVELS[d.level || h.difficulty]?.name || '')} · 估计底池份额 ${Math.round(d.equity * 100)}% · ${d.samples} ${d.method === 'enumeration' ? '种组合枚举' : '次模拟'}<br>${escape(d.reason)}</p>`).join('')}<p class="muted">估计底池份额包含平分情况，依赖对手范围假设。诈唬与价值下注采用混合策略，单手结果不能证明决策优劣。</p></div></div></details>`).join('') : '<div class="no-history">完成第一手后，记录会出现在这里。</div>';
+    $('history-content').innerHTML = history.length ? history.map(h => `<details class="history-hand"><summary><span>第 ${h.hand} 手 · ${h.variant === 'short' ? '短牌' : '标准牌'} · ${h.playerCount || h.names.length} 人 · ${escape(h.date)} </span><b class="${h.net >= 0 ? 'positive' : 'negative'}">${signed(h.net)}</b><br><span class="muted">你的手牌 ${escape(cardsText(h.hero))}　公共牌 ${escape(cardsText(h.board)) || '未发出'}</span></summary><div class="history-detail"><h4>结算 · 底池 ${fmt(h.pot)}</h4>${h.results.map(r => `<p>${escape(h.names[r.id])} ${signed(r.net)} ${r.hole.length ? ' · ' + escape(cardsText(r.hole)) + ' · ' + escape(r.hand) : ''}</p>`).join('')}<h4>行动记录</h4>${h.events.map(e => `<p>${escape(eventText(e, h.names))}</p>`).join('')}<div class="review"><h4>AI 决策回看</h4>${h.decisions.map(d => `<p><strong>${escape(h.names[d.player])} · ${streetNames[d.street]}</strong> · ${escape(AI.LEVELS[d.level || h.difficulty]?.name || '')} · 估计底池份额 ${Math.round(d.equity * 100)}% · ${d.samples} ${d.method === 'enumeration' ? '种组合枚举' : '次模拟'}<br>${escape(d.reason)}</p>`).join('')}<p class="muted">估计底池份额包含平分情况，依赖对手范围假设。诈唬与价值下注采用混合策略，单手结果不能证明决策优劣。</p></div></div></details>`).join('') : '<div class="no-history">完成第一手后，记录会出现在这里。</div>';
     openDialog('history-dialog');
   });
   document.addEventListener('keydown', e => {
