@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#101918">
+  <meta name="description" content="完全离线的德州扑克练习桌。六人对局、多种 AI 打法、范围胜率模拟。">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; script-src 'self' file:; style-src 'self' 'unsafe-inline' file:; img-src 'self' data: file:; connect-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>夜航 · 离线德州扑克</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="engine.js"></script>
+  <script defer src="ai.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="夜航扑克首页"><span class="brand-mark">♠</span><span>夜航 <b>POKER CLUB</b></span></a>
+    <div class="top-center"><span class="status-dot"></span>本地牌桌 <span class="divider">/</span> 无限注德州扑克</div>
+    <div class="header-actions"><span class="offline-pill"><span class="status-dot"></span>完全离线</span><button id="help-button" class="icon-button" title="规则与快捷键" aria-label="规则与快捷键">?</button></div>
+  </header>
+  <main class="layout">
+    <aside class="sidebar left-sidebar">
+      <div class="side-heading">THE PRIVATE TABLE <span>01</span></div>
+      <h1>好牌，慢慢打。</h1><p class="muted intro">一张牌桌，五种思路。<br>在自己的节奏里，磨练每次决策。</p>
+      <div class="section-label">牌桌设置 <span class="tiny">实时生效</span></div>
+      <label class="field-label" for="difficulty">AI 难度</label>
+      <select id="difficulty"><option value="easy">入门 · 熟悉牌桌</option><option value="normal">标准 · 稳扎稳打</option><option value="hard">进阶 · 有来有回</option><option value="expert" selected>专家 · 深度思考</option></select>
+      <p id="difficulty-description" class="setting-note"></p>
+      <label class="field-label" for="speed">对局节奏</label>
+      <select id="speed"><option value="1400">悠闲</option><option value="750" selected>标准</option><option value="250">快速</option></select>
+      <div class="section-label opponents-title">你的对手 <button id="styles-button" class="text-button">调整打法 ↗</button></div>
+      <div id="opponent-list" class="opponent-list"></div>
+      <div class="private-note"><span>◇</span><div><strong>每一手，都公平</strong><p>AI 只知道自己的底牌。<br>所有计算都在本机完成。</p></div></div>
+      <button id="new-table" class="secondary-button full-width">＋ 新建牌桌</button>
+    </aside>
+    <section class="game-area" aria-label="德州扑克牌桌">
+      <div class="table-heading"><div><span class="eyebrow">NO LIMIT HOLD’EM</span><h2>夜航练习桌 <span>6-MAX</span></h2></div><div class="table-meta"><span id="hand-label">第 001 手</span><span id="blinds-label">盲注 10 / 20</span></div></div>
+      <div class="table-stage">
+        <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
+        <div class="poker-table"><div class="felt-line"></div><div class="table-wordmark">夜 航<span>POKER CLUB</span></div></div>
+        <div class="board-zone"><div class="pot-label">底池 <strong id="pot-value">0</strong><span id="pot-bb"></span></div><div class="board" id="board" aria-label="公共牌"></div><div class="street-badge" id="street-label">等待发牌</div></div>
+        <div id="seats"></div>
+        <div id="result-banner" class="result-banner" hidden></div>
+      </div>
+      <div class="action-panel" id="action-panel">
+        <div class="turn-line"><span id="turn-title">准备开始</span><span id="turn-note" class="muted"></span></div>
+        <div id="bet-controls" class="bet-controls"><div class="bet-shortcuts"><button data-size="min">最小</button><button data-size="half">½ 底池</button><button data-size="three">¾ 底池</button><button data-size="pot">满池</button><button data-size="all">全下</button></div><div class="bet-slider"><input id="bet-range" type="range" aria-label="加注到的筹码总额"><label class="bet-input-label">加注到 <input id="bet-amount" type="number" inputmode="numeric" aria-label="加注到"></label></div></div>
+        <div class="action-buttons" id="action-buttons"><button id="fold-button" class="action fold">弃牌 <kbd>F</kbd></button><button id="call-button" class="action call">过牌 <kbd>C</kbd></button><button id="raise-button" class="action raise">加注 <kbd>R</kbd></button></div>
+        <div id="between-hands" class="between-hands" hidden><div id="result-summary"></div><button id="next-hand" class="primary-button">下一手 <span>→</span></button></div>
+        <div id="waiting" class="waiting" hidden><span class="thinking-dots"><i></i><i></i><i></i></span><span id="waiting-text">AI 正在思考</span><button id="pause-button" class="text-button">暂停</button></div>
+      </div>
+      <div class="table-footer"><span>♠ 筹码仅用于本地练习</span><span>F 弃牌 · C 过牌 / 跟注 · R 加注 · N 下一手</span></div>
+    </section>
+    <aside class="sidebar right-sidebar">
+      <div class="session-heading"><span class="section-label">本场表现</span><span class="live-label">SESSION</span></div>
+      <div class="balance"><span class="muted">你的筹码</span><strong id="hero-stack">2,000</strong><span id="session-net">± 0 本场净值</span></div>
+      <div class="stat-row"><div><strong id="played-stat">0</strong><span>已完成</span></div><div><strong id="won-stat">0</strong><span>赢得底池</span></div><div><strong id="vpip-stat">—</strong><span>入池率</span></div></div>
+      <div class="log-header"><h3>牌局动态</h3><span id="log-street">本手</span></div>
+      <div id="hand-log" class="hand-log" role="log" aria-label="牌局动态"></div>
+      <div class="insight-card"><span class="eyebrow">TABLE NOTE</span><p id="table-tip">好决策不总是赢一手牌。<br>关注长期收益，也享受过程。</p></div>
+      <button id="history-button" class="secondary-button full-width">查看最近牌局 <span>↗</span></button>
+    </aside>
+  </main>
+  <div id="toast" role="status" class="toast" hidden></div>
+  <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><div><span class="eyebrow">MAKE IT YOUR TABLE</span><h2>新建牌桌</h2></div><button type="button" class="close-dialog icon-button" aria-label="关闭">×</button></div><p class="muted">新牌桌会结束当前对局，重新分配练习筹码。</p><label class="field-label" for="starting-stack">每人起始筹码</label><select id="starting-stack"><option value="1000">1,000 · 50 BB</option><option value="2000" selected>2,000 · 100 BB</option><option value="4000">4,000 · 200 BB</option></select><div id="style-settings"></div><button type="submit" class="primary-button full-width">创建并发牌 →</button></form></dialog>
+  <dialog id="styles-dialog"><div class="dialog-heading"><div><span class="eyebrow">FIVE DIFFERENT MINDS</span><h2>对手打法</h2></div><button class="close-dialog icon-button" aria-label="关闭">×</button></div><p class="muted">修改后从下一手生效。打法决定倾向，难度决定判断精度。</p><div id="live-style-settings"></div><button id="save-styles" class="primary-button full-width">保存打法</button></dialog>
+  <dialog id="help-dialog"><div class="dialog-heading"><h2>坐下来，打一手。</h2><button class="close-dialog icon-button" aria-label="关闭">×</button></div><div class="help-content"><h3>基本规则</h3><p>每人两张底牌，加上最多五张公共牌，取其中最强的五张比较。你可以弃牌、过牌、跟注、下注或加注。最后仍未弃牌的人争夺底池。</p><p>牌型从强到弱：同花顺、四条、葫芦、同花、顺子、三条、两对、一对、高牌。A 可组成 A2345 小顺子；花色不分大小。</p><h3>下注与全下</h3><p>“加注到”指本轮累计投入的总额。最小加注幅度等于上一次完整加注幅度。筹码不足可全下；不足最小幅度的全下不会自动重新开放已行动玩家的加注权。筹码不等时自动分配主池、边池和平分余数。</p><h3>离线 AI 如何思考</h3><p>结合起手牌范围、行动历史、位置和对手统计，以蒙特卡洛模拟估计胜率，再选择价值下注、跟注、诈唬或弃牌。专家档每次决策默认模拟 1,800 次，但不是 GTO 求解器，也不保证职业级水平。</p><p>策略仅接收自己的底牌和公开信息。牌后复盘会显示 AI 当时的估算；弃牌玩家的底牌不会公开。不会调用任何联网服务。</p><h3>操作与保存</h3><p>F：弃牌　C：过牌 / 跟注　R：加注　N：下一手。输入金额或打开弹窗时不触发快捷键。设置和最近 20 手记录尽可能保存于当前浏览器；刷新页面会新开一桌。筹码归零后可新建牌桌。</p></div></dialog>
+  <dialog id="history-dialog" class="wide-dialog"><div class="dialog-heading"><div><span class="eyebrow">YOUR LAST HANDS</span><h2>最近牌局</h2></div><button class="close-dialog icon-button" aria-label="关闭">×</button></div><p class="muted">本机保留最近 20 手。估算胜率依赖模型范围，不是真实胜率。</p><div id="history-content"></div></dialog>
+  <noscript>请启用 JavaScript。本游戏的所有规则和 AI 均在浏览器本地运行。</noscript>
+</body>
+</html>

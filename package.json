@@ -1,0 +1,8 @@
+{
+  "name": "night-poker-offline",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dependency-free offline Texas Hold'em practice table",
+  "scripts": { "test": "node tests/run.cjs", "start": "python3 -m http.server 8787 --bind 127.0.0.1" },
+  "license": "UNLICENSED"
+}
