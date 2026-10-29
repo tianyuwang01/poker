@@ -275,6 +275,36 @@ test('所有难度 × 性格 × 多样性：合法动作；两种牌库完整对
     assert.equal(g.players.reduce((sum, p) => sum + p.stack, 0), count * 500);
   }
 });
+test('强起手牌遇到未重新开放的加注权，按赔率跟注而非错误弃牌', () => {
+  const g = make([500, 150, 500], rng(10)); g.start();
+  g.act(0, 'raise', 100); g.act(1, 'raise', 150); g.act(2, 'call');
+  const obs = g.observation(); obs.hole = parse('Ac Ad');
+  assert.equal(obs.legal.canRaise, false);
+  const d = AI.decide(obs, 'expert', 'balanced', rng(4), 1800);
+  assert(d.equity > .6); assert.equal(d.type, 'call'); g.act(g.actor, d.type, d.amount);
+});
+test('强起手牌面对覆盖自己筹码的全下可以跟注', () => {
+  const g = make([200, 100], rng(12)); g.start(); g.act(g.actor, 'raise', 200);
+  const obs = g.observation(); obs.hole = parse('Ac Ad');
+  assert.equal(obs.legal.canRaise, false); assert.equal(obs.legal.toCall, obs.players[obs.id].stack);
+  const d = AI.decide(obs, 'expert', 'balanced', rng(14), 1800);
+  assert.equal(d.type, 'call'); g.act(g.actor, d.type, d.amount); assert.equal(g.status, 'complete');
+});
+test('小额下注保留有赔率的防守，无胜率的弱牌和昂贵跟注仍可弃牌', () => {
+  const g = make([2000, 2000, 2000], rng(10)); g.start();
+  g.act(0, 'raise', 60); g.act(1, 'call'); g.act(2, 'call');
+  g.act(1, 'raise', 40); g.act(2, 'fold');
+  const obs = g.observation(); obs.board = parse('Kh 8s 3d'); obs.hole = parse('Ac 5c');
+  const d = AI.decide(obs, 'expert', 'balanced', rng(21), 1800);
+  assert(d.equity > d.odds); assert.equal(d.type, 'call');
+  obs.hole = parse('7c 2d');
+  assert.equal(AI.decide(obs, 'expert', 'balanced', rng(21), 1800).type, 'fold');
+  const large = make([2000, 2000, 2000], rng(10)); large.start();
+  large.act(0, 'raise', 60); large.act(1, 'call'); large.act(2, 'call');
+  large.act(1, 'raise', 360); large.act(2, 'fold');
+  const expensive = large.observation(); expensive.board = parse('Kh 8s 3d'); expensive.hole = parse('Ac 5c');
+  assert.equal(AI.decide(expensive, 'expert', 'balanced', rng(21), 1800).type, 'fold');
+});
 (async () => {
   const S = require('../sound.js');
   let created = 0, started = 0, stopped = 0;
