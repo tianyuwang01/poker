@@ -212,21 +212,30 @@
     const odds = l.toCall / Math.max(1, eligiblePot + l.toCall);
     const foldRate = rivals.reduce((s, p) => s + (p.stats.foldedToBet + 5) / (p.stats.facedBet + 12), 0) / Math.max(1, rivals.length);
     const callHeavy = rivals.reduce((s, p) => s + (p.stats.calls + 4) / (p.stats.bets + p.stats.calls + 8), 0) / Math.max(1, rivals.length);
-    const realization = obs.street === 'river' || !me.stack || l.toCall === me.stack ? 1 : clamp(.82 + pos * .12 - (rivals.length - 1) * .035 + f.draw * .15, .68, 1);
+    // A large price needs more caution; tiny bets should not incur the same
+    // future-street discount plus a fixed extra equity tax.
+    const price = l.toCall / Math.max(obs.bigBlind, eligiblePot);
+    const realization = obs.street === 'river' || !me.stack || l.toCall === me.stack ? 1
+      : obs.street === 'preflop' ? clamp(.86 + pos * .10 - (rivals.length - 1) * .025, .74, .98)
+      : clamp(.93 + pos * .06 - (rivals.length - 1) * .018 - Math.min(.06, price * .06), .80, .99);
     const adjusted = eq * realization + style.call;
     let type = l.canCheck ? 'check' : 'fold', amount, reason = '保留筹码，等待更有利的机会';
     const raises = obs.events.filter(e => e.type === 'action' && e.street === 'preflop' && e.action === 'raise');
     let valueRaise = false, bluff = false;
     if (obs.street === 'preflop') {
       const unopened = raises.length === 0;
-      const threshold = clamp(.85 - pos * .23 - style.looseness + (rivals.length > 3 ? .02 : -.06), .4, .94);
+      const threshold = clamp(.81 - pos * .23 - style.looseness + (rivals.length > 3 ? .02 : -.06), .4, .94);
       if (unopened && pf >= threshold) { valueRaise = true; reason = '位置与起手牌范围支持主动入池'; }
       else if (!unopened && pf >= (raises.length > 1 ? .985 : .945) - style.looseness * .2 && eq >= .40) { valueRaise = true; reason = '强起手牌再加注，争取价值与主动权'; }
-      if (!valueRaise && !l.canCheck && adjusted > odds + .025 - style.looseness * .12 && (pf > .49 - pos * .13 - style.looseness || l.toCall <= obs.bigBlind)) { type = 'call'; reason = '起手牌与底池赔率允许继续'; }
+      // Establish a legal call independently of the desire to raise. Short
+      // all-ins or a closed raising round must not turn a premium into a fold.
+      const callMargin = .008 + Math.min(.017, price * .025);
+      const defendingBlind = (obs.id === obs.bb || obs.id === obs.sb) && l.rawCall <= 2 * obs.bigBlind;
+      if (!l.canCheck && adjusted > odds + callMargin - style.looseness * .12 && (pf > .45 - pos * .13 - style.looseness - (defendingBlind ? .12 : 0) || l.toCall <= obs.bigBlind)) { type = 'call'; reason = '起手牌与底池赔率允许继续'; }
       // Small blocker-based three-bet bluff component, never random weak-hand shoves.
       bluff = raises.length === 1 && f.blocker && pf > .50 && pf < .88 && rng() < .055 * style.bluff && l.rawCall < me.stack * .12;
     } else {
-      if (!l.canCheck && adjusted >= odds + (obs.street === 'river' ? .005 : .02)) { type = 'call'; reason = '范围胜率与底池赔率支持跟注'; }
+      if (!l.canCheck && adjusted >= odds + (obs.street === 'river' ? 0 : Math.min(.012, price * .016))) { type = 'call'; reason = '范围胜率与底池赔率支持跟注'; }
       const valueThreshold = l.rawCall ? .73 : rivals.length > 2 ? .62 : .58;
       valueRaise = eq > valueThreshold && f.made > .43 && rng() < clamp(.76 * style.aggression + (eq - valueThreshold), .35, .97);
       if (valueRaise) reason = '对估计范围领先，下注获取价值';
@@ -267,7 +276,10 @@
       target = Math.round(target / Math.max(1, unit / 2)) * Math.max(1, unit / 2);
       target = Math.min(l.maxRaiseTo, Math.max(l.minRaiseTo, target));
       // Do not turn a tiny mandatory minimum into an expensive weak bluff.
-      if (!bluff || target - me.bet < me.stack * .6) { type = 'raise'; amount = target; }
+      if (!bluff || target - me.bet < me.stack * .6) {
+        type = 'raise'; amount = target;
+        if (obs.street === 'preflop') reason = bluff ? '选择性阻断牌再加注诈唬' : raises.length ? '强起手牌再加注，争取价值与主动权' : '位置与起手牌范围支持主动入池';
+      }
     }
     if (type === 'fold' && l.canCheck) type = 'check';
     if (type === 'check') reason = '控制底池，保留后续决策空间';
